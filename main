@@ -1,0 +1,319 @@
+
+import socket
+import json
+import gc
+
+# ==========================================================
+# 1. CONFIGURACIÓN Y BASE DE DATOS EN MEMORIA
+# ==========================================================
+
+USUARIOS = {
+    "estudiante@uip.ac.pa": {"pass": "1234", "rol": "estudiante", "nombre": "Carlos Estudiante"},
+    "profesor@uip.ac.pa": {"pass": "1234", "rol": "profesor", "nombre": "Dr. Juan Profesor"},
+    "admin@uip.ac.pa": {"pass": "1234", "rol": "admin", "nombre": "Ing. Administrador IT"}
+}
+
+LABORATORIOS = [
+    {"code": "TEC-101", "name": "Laboratorio de Redes y Ciberseguridad", "area": "Tecnologia",
+     "equipment": "Switches Cisco, Routers, Servidores Rack"},
+    {"code": "TEC-102", "name": "Laboratorio de Desarrollo de Software", "area": "Tecnologia",
+     "equipment": "30 PCs de Alto Rendimiento, Monitores Duales"},
+    {"code": "TEC-103", "name": "Laboratorio de Robótica e IoT", "area": "Tecnologia",
+     "equipment": "Kits Arduino/ESP32, Impresoras 3D, Estaciones de Soldadura"},
+    {"code": "CIE-201", "name": "Laboratorio de Química Analítica", "area": "Ciencias",
+     "equipment": "Campanas extractoras, Espectrofotómetros, Balanzas analíticas"},
+    {"code": "CIE-202", "name": "Laboratorio de Biología Molecular", "area": "Ciencias",
+     "equipment": "Termocicladores PCR, Centrífugas, Microscopios ópticos"},
+    {"code": "CIE-203", "name": "Laboratorio de Física Aplicada", "area": "Ciencias",
+     "equipment": "Bancos de óptica, Generadores de funciones, Osciloscopios"},
+    {"code": "SAL-301", "name": "Laboratorio de Simulación Clínica", "area": "Salud",
+     "equipment": "Maniquíes de alta fidelidad, Monitores de signos vitales"},
+    {"code": "SAL-302", "name": "Laboratorio de Anatomía y Morfología", "area": "Salud",
+     "equipment": "Modelos anatómicos avanzados, Mesas de disección virtual"},
+    {"code": "SAL-303", "name": "Laboratorio de Farmacología", "area": "Salud",
+     "equipment": "Equipos de medición, Pipetas automáticas, Agitadores magnéticos"},
+    {"code": "GAS-401", "name": "Cocina Demostrativa Principal", "area": "Gastronomía",
+     "equipment": "Estufas industriales, Hornos convección, Abatidores de temperatura"},
+    {"code": "GAS-402", "name": "Taller de Panadería y Repostería", "area": "Gastronomía",
+     "equipment": "Amasadoras, Hornos rotativos, Batidoras planetarias"},
+    {"code": "GAS-403", "name": "Laboratorio de Análisis de Alimentos", "area": "Gastronomía",
+     "equipment": "Refractómetros, Estufas de secado, pH-metros digitales"},
+    {"code": "DIS-501", "name": "Laboratorio de Diseño Digital y CAD", "area": "Diseño",
+     "equipment": "Tabletas gráficas Wacom, Estaciones Mac Studio, Plotters"},
+    {"code": "DIS-502", "name": "Taller de Modelado y Prototipado", "area": "Diseño",
+     "equipment": "Cortadoras láser, Escáneres 3D de mano, Herramientas de precisión"},
+    {"code": "DIS-503", "name": "Estudio de Fotografía y Multimedia", "area": "Diseño",
+     "equipment": "Iluminación cenital, Cámaras DSLR, Croma key profesional"}
+]
+
+reservas_db = []
+reportes_db = []
+notificaciones_db = {}
+contador_reservas = 0
+
+
+# ==========================================================
+# 2. MOTOR HTTP DEL MICROCONTROLADOR (BACKEND)
+# ==========================================================
+def serve():
+    global reservas_db, reportes_db, notificaciones_db, contador_reservas
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('', 80))
+    s.listen(5)
+    print("SERVIDOR ESP32 REINICIADO Y OPTIMIZADO")
+
+    while True:
+        conn = None
+        try:
+            conn, addr = s.accept()
+            conn.settimeout(3.0)
+
+            raw_data = conn.recv(4096)
+            if not raw_data:
+                conn.close()
+                continue
+
+            request = raw_data.decode('utf-8', 'ignore')
+
+            if '\r\n\r\n' in request:
+                partes_req = request.split('\r\n\r\n', 1)
+                cabeceras_str = partes_req[0]
+                cuerpo_str = partes_req[1] if len(partes_req) > 1 else ""
+            else:
+                cabeceras_str = request
+                cuerpo_str = ""
+
+            cabeceras = cabeceras_str.split('\r\n')
+            primera_linea = cabeceras[0].split(' ')
+
+            if len(primera_linea) < 2:
+                conn.close()
+                continue
+
+            method = primera_linea[0]
+            path_full = primera_linea[1]
+            path = path_full.split('?')[0]
+
+            body_data = {}
+
+            if method == 'POST':
+                content_length = 0
+                for linea in cabeceras:
+                    if linea.lower().startswith('content-length:'):
+                        try:
+                            content_length = int(linea.split(':')[1].strip())
+                        except:
+                            content_length = 0
+                        break
+
+                intentos = 0
+                while len(cuerpo_str) < content_length and intentos < 10:
+                    try:
+                        chunk = conn.recv(1024)
+                        if not chunk:
+                            break
+                        cuerpo_str += chunk.decode('utf-8', 'ignore')
+                    except:
+                        break
+                    intentos += 1
+
+                if cuerpo_str:
+                    try:
+                        body_data = json.loads(cuerpo_str)
+                    except:
+                        body_data = {}
+
+            # Lectura y envío del archivo index.html almacenado en el ESP32
+            if path == '/':
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n')
+                try:
+                    with open('index.html', 'r', encoding='utf-8') as f:
+                        while True:
+                            chunk = f.read(512)
+                            if not chunk:
+                                break
+                            conn.sendall(chunk)
+                except Exception as e:
+                    conn.sendall("Error: No se encontró index.html en el ESP32.")
+
+            elif path == '/qr.js':
+                conn.send(
+                    'HTTP/1.1 200 OK\r\nContent-Type: application/javascript; charset=utf-8\r\nConnection: close\r\n\r\n')
+                qr_js_code = """
+                function generarQR(texto, idCanvas) {
+                    const canvas = document.getElementById(idCanvas);
+                    if (!canvas) return;
+                    const ctx = canvas.getContext('2d');
+                    const size = 160;
+                    canvas.width = size;
+                    canvas.height = size;
+                    ctx.fillStyle = "#FFFFFF";
+                    ctx.fillRect(0, 0, size, size);
+                    ctx.fillStyle = "#002B49";
+                    let hash = 0;
+                    for (let i = 0; i < texto.length; i++) {
+                        hash = ((hash << 5) - hash) + texto.charCodeAt(i);
+                        hash |= 0;
+                    }
+                    const cols = 21;
+                    const cellSize = size / cols;
+                    function dibujarEsquina(x, y) {
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize * 7, cellSize * 7);
+                        ctx.fillStyle = "#FFFFFF";
+                        ctx.fillRect((x + 1) * cellSize, (y + 1) * cellSize, cellSize * 5, cellSize * 5);
+                        ctx.fillStyle = "#002B49";
+                        ctx.fillRect((x + 2) * cellSize, (y + 2) * cellSize, cellSize * 3, cellSize * 3);
+                    }
+                    dibujarEsquina(0, 0);
+                    dibujarEsquina(14, 0);
+                    dibujarEsquina(0, 14);
+                    for (let r = 0; r < cols; r++) {
+                        for (let c = 0; c < cols; c++) {
+                            if ((r < 8 && c < 8) || (r < 8 && c > 12) || (r > 12 && c < 8)) continue;
+                            if ((Math.sin(hash + r * c) * 10000) % 2 > 1) {
+                                ctx.fillRect(c * cellSize, r * cellSize, cellSize, cellSize);
+                            }
+                        }
+                    }
+                }
+                """
+                conn.sendall(qr_js_code)
+
+            elif path == '/api/labs':
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    LABORATORIOS))
+
+            elif path == '/api/login':
+                correo = body_data.get('correo', '')
+                password = body_data.get('pass', '')
+                if correo in USUARIOS and USUARIOS[correo]['pass'] == password:
+                    usr = USUARIOS[correo]
+                    res = json.dumps({"status": "ok", "nombre": usr['nombre'], "rol": usr['rol']})
+                else:
+                    res = json.dumps({"status": "error", "mensaje": "Usuario o clave incorrecta"})
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + res)
+
+            elif path == '/api/reservar':
+                labCode = body_data.get('labCode')
+                fecha = body_data.get('fecha')
+                hora = body_data.get('hora')
+                rol_actual = body_data.get('rol', 'estudiante')
+                correo_actual = body_data.get('usuarioCorreo')
+
+                if not labCode or not fecha or not hora:
+                    conn.send(
+                        'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                            {"status": "error", "mensaje": "Datos incompletos."}))
+                    conn.close()
+                    continue
+
+                conflicto = None
+                for r in reservas_db:
+                    if r.get('labCode') == labCode and r.get('fecha') == fecha and r.get('hora') == hora:
+                        conflicto = r
+                        break
+
+                if conflicto:
+                    if rol_actual == 'profesor' and conflicto.get('rol') == 'estudiante':
+                        estudiante_afectado = conflicto.get('usuarioCorreo')
+                        reservas_db = [r for r in reservas_db if r.get('id') != conflicto.get('id')]
+
+                        if estudiante_afectado not in notificaciones_db:
+                            notificaciones_db[estudiante_afectado] = []
+                        notificaciones_db[estudiante_afectado].append(
+                            "Tu reserva en " + labCode + " (" + fecha + ") fue reasignada por prioridad docente.")
+                    else:
+                        conn.send(
+                            'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                                {"status": "error", "mensaje": "El laboratorio ya está reservado en ese horario."}))
+                        conn.close()
+                        continue
+
+                contador_reservas += 1
+                res_id = "RES-%04d" % contador_reservas
+
+                nueva_reserva = {
+                    "id": res_id,
+                    "labCode": labCode,
+                    "labNombre": body_data.get('labNombre', 'Laboratorio UIP'),
+                    "area": body_data.get('area', 'Tecnologia'),
+                    "fecha": fecha,
+                    "hora": hora,
+                    "usuarioCorreo": correo_actual,
+                    "usuarioNombre": body_data.get('usuarioNombre', 'Usuario'),
+                    "rol": rol_actual
+                }
+                reservas_db.append(nueva_reserva)
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    {"status": "ok", "id": res_id}))
+
+            elif path == '/api/mis_reservas':
+                correo_query = ""
+                if '?' in path_full:
+                    query_params = path_full.split('?')[1].split('&')
+                    for p in query_params:
+                        if p.startswith('correo='):
+                            correo_query = p.split('=')[1].replace('%40', '@').replace('%20', ' ')
+
+                mis_res = [r for r in reservas_db if r.get('usuarioCorreo') == correo_query]
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    mis_res))
+
+            elif path == '/api/cancelar_reserva' or path == '/api/admin_cancelar':
+                res_id = body_data.get('id', '')
+                reservas_db = [r for r in reservas_db if r.get('id') != res_id]
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    {"status": "ok"}))
+
+            elif path == '/api/notificaciones':
+                correo_query = ""
+                if '?' in path_full:
+                    query_params = path_full.split('?')[1].split('&')
+                    for p in query_params:
+                        if p.startswith('correo='):
+                            correo_query = p.split('=')[1].replace('%40', '@').replace('%20', ' ')
+
+                avisos = notificaciones_db.get(correo_query, [])
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    avisos))
+                if correo_query in notificaciones_db:
+                    notificaciones_db[correo_query] = []
+
+            elif path == '/api/todas_reservas':
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    reservas_db))
+
+            elif path == '/api/reportar':
+                reportes_db.append(body_data)
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    {"status": "ok"}))
+
+            elif path == '/api/reportes':
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    reportes_db))
+
+            elif path == '/api/resolver_reporte':
+                idx = body_data.get('index')
+                if idx is not None and 0 <= idx < len(reportes_db):
+                    reportes_db.pop(idx)
+                conn.send('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n' + json.dumps(
+                    {"status": "ok"}))
+
+            else:
+                conn.send('HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n404')
+
+        except Exception as e:
+            print("Error en socket:", e)
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+            gc.collect()
+
+
+if __name__ == '__main__':
+    serve()
