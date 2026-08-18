@@ -1,0 +1,438 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartLab UIP - Sistema Integral de Reservas</title>
+    <style>
+        :root {
+            --primary: #002B49;
+            --primary-light: #004d80;
+            --accent: #C5A059;
+            --bg-color: #F4F6F9;
+            --text-color: #333333;
+            --danger: #D9534F;
+            --success: #5CB85C;
+            --card-bg: #FFFFFF;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: var(--bg-color); color: var(--text-color); line-height: 1.6; }
+        header { background-color: var(--primary); color: white; padding: 1rem; text-align: center; border-bottom: 4px solid var(--accent); }
+        .container { max-width: 1000px; margin: 20px auto; padding: 0 15px; }
+        .card { background: var(--card-bg); padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h2 { color: var(--primary); margin-bottom: 15px; font-size: 1.4rem; border-bottom: 2px solid var(--bg-color); padding-bottom: 8px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; color: var(--primary); }
+        select, input, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+        button { background-color: var(--primary); color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 1rem; font-weight: 600; transition: background 0.2s; }
+        button:hover { background-color: var(--primary-light); }
+        button.btn-accent { background-color: var(--accent); color: var(--primary); }
+        button.btn-danger { background-color: var(--danger); }
+        .hidden { display: none !important; }
+        .nav-tabs { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+        .nav-tabs button { flex: 1; background: #e0e0e0; color: #333; }
+        .nav-tabs button.active { background: var(--primary); color: white; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; color: white; }
+        .badge-estudiante { background-color: #337ab7; }
+        .badge-profesor { background-color: #f0ad4e; }
+        .badge-admin { background-color: #d9534f; }
+        .item-list { border: 1px solid #eee; padding: 12px; border-radius: 6px; margin-bottom: 10px; background: #fafafa; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+        .toast { position: fixed; bottom: 20px; right: 20px; background: var(--primary); color: white; padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); z-index: 1000; transition: opacity 0.3s; }
+        .qr-box { text-align: center; margin-top: 15px; }
+        canvas { border: 4px solid var(--primary); border-radius: 4px; background: white; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>SmartLab UIP</h1>
+        <p>Sistema Inteligente de Gestión de Laboratorios y Equipamiento</p>
+    </header>
+
+    <div class="container">
+        <!-- SECCIÓN DE LOGIN -->
+        <div id="sec-login" class="card">
+            <h2>Iniciar Sesión Institucional</h2>
+            <div class="form-group">
+                <label>Correo Electrónico:</label>
+                <select id="login-correo">
+                    <option value="estudiante@uip.ac.pa">estudiante@uip.ac.pa (Estudiante)</option>
+                    <option value="profesor@uip.ac.pa">profesor@uip.ac.pa (Profesor)</option>
+                    <option value="admin@uip.ac.pa">admin@uip.ac.pa (Administrador IT)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Contraseña:</label>
+                <input type="password" id="login-pass" value="1234">
+            </div>
+            <button onclick="fLogin()">Ingresar al Sistema</button>
+        </div>
+
+        <!-- APLICACIÓN PRINCIPAL -->
+        <div id="sec-app" class="hidden">
+            <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h3 id="lbl-bienvenida" style="color: var(--primary);">Bienvenido</h3>
+                    <p>Rol: <span id="lbl-rol-badge" class="badge"></span></p>
+                </div>
+                <button class="btn-danger" onclick="fLogout()">Cerrar Sesión</button>
+            </div>
+
+            <!-- Notificaciones Dinámicas -->
+            <div id="box-alertas" class="card hidden" style="border-left: 5px solid var(--accent);">
+                <h4 style="color: var(--accent);">Notificaciones del Sistema</h4>
+                <div id="lista-alertas" style="margin-top: 8px; font-size: 0.95rem;"></div>
+            </div>
+
+            <!-- Pestañas de Navegación -->
+            <div class="nav-tabs" id="menu-tabs">
+                <button id="tab-reserva" class="active" onclick="switchTab('reserva')">Reservar Laboratorio</button>
+                <button id="tab-mis-reservas" onclick="switchTab('mis-reservas')">Mis Reservas & QR</button>
+                <button id="tab-reporte" onclick="switchTab('reporte')">Reportar Falla</button>
+                <button id="tab-admin" class="hidden" onclick="switchTab('admin')">Panel Administrador IT</button>
+            </div>
+
+            <!-- TAB 1: RESERVAR -->
+            <div id="pane-reserva" class="card pane">
+                <h2>Reservar Espacio Académico</h2>
+                <div class="form-group">
+                    <label>Seleccionar Área y Laboratorio:</label>
+                    <select id="sel-lab" onchange="mostrarDetallesLab()"></select>
+                </div>
+                <div id="info-equipos" style="background: #eef2f7; padding: 10px; border-radius: 4px; margin-bottom: 15px; font-size: 0.9rem;"></div>
+                <div class="form-group">
+                    <label>Fecha de Reserva:</label>
+                    <input type="date" id="res-fecha">
+                </div>
+                <div class="form-group">
+                    <label>Bloque Horario:</label>
+                    <select id="res-hora">
+                        <option value="07:00 - 09:00">07:00 AM - 09:00 AM</option>
+                        <option value="09:00 - 11:00">09:00 AM - 11:00 AM</option>
+                        <option value="11:00 - 13:00">11:00 AM - 01:00 PM</option>
+                        <option value="14:00 - 16:00">02:00 PM - 04:00 PM</option>
+                        <option value="16:00 - 18:00">04:00 PM - 06:00 PM</option>
+                    </select>
+                </div>
+                <button onclick="fReservar()">Confirmar Reserva</button>
+            </div>
+
+            <!-- TAB 2: MIS RESERVAS -->
+            <div id="pane-mis-reservas" class="card pane hidden">
+                <h2>Mis Reservas Activas y Pase QR</h2>
+                <div id="contenedor-mis-reservas">Cargando reservas...</div>
+            </div>
+
+            <!-- TAB 3: REPORTAR FALLA -->
+            <div id="pane-reporte" class="card pane hidden">
+                <h2>Reportar Incidencia o Falla de Hardware</h2>
+                <div class="form-group">
+                    <label>Laboratorio con la Falla:</label>
+                    <select id="rep-lab"></select>
+                </div>
+                <div class="form-group">
+                    <label>Descripción detallada del problema:</label>
+                    <textarea id="rep-desc" rows="4" placeholder="Ej. El proyector no enciende / PC bloqueada en BIOS..."></textarea>
+                </div>
+                <button class="btn-accent" onclick="fEnviarReporte()">Enviar Reporte a IT</button>
+            </div>
+
+            <!-- TAB 4: ADMIN PANEL -->
+            <div id="pane-admin" class="card pane hidden">
+                <h2>Panel Global de Control IT (Administrador)</h2>
+                <div style="margin-bottom: 20px;">
+                    <h3 style="font-size: 1.1rem; color: var(--primary); margin-bottom: 10px;">Control General de Reservas Activas</h3>
+                    <div id="admin-lista-reservas">Cargando listado general...</div>
+                </div>
+                <div>
+                    <h3 style="font-size: 1.1rem; color: var(--danger); margin-bottom: 10px;">Gestión de Reportes Técnicos de Equipos</h3>
+                    <div id="admin-lista-reportes">Cargando reportes...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast hidden">Mensaje del sistema</div>
+
+    <script src="/qr.js"></script>
+    <script>
+        let currentUser = null;
+        let listaLabs = [];
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.innerText = msg;
+            t.classList.remove('hidden');
+            setTimeout(() => t.classList.add('hidden'), 4000);
+        }
+
+        async function initApp() {
+            try {
+                let res = await fetch('/api/labs');
+                listaLabs = await res.json();
+                let opts = '';
+                let optsRep = '';
+                listaLabs.forEach(l => {
+                    opts += `<option value="${l.code}" data-equipos="${l.equipment}" data-nombre="${l.name}" data-area="${l.area}">[${l.area}] ${l.name} (${l.code})</option>`;
+                    optsRep += `<option value="${l.code}">[${l.area}] ${l.name}</option>`;
+                });
+                document.getElementById('sel-lab').innerHTML = opts;
+                document.getElementById('rep-lab').innerHTML = optsRep;
+                mostrarDetallesLab();
+            } catch(e) {
+                console.error("Error cargando laboratorios", e);
+            }
+        }
+
+        function mostrarDetallesLab() {
+            const sel = document.getElementById('sel-lab');
+            const opt = sel.options[sel.selectedIndex];
+            if(opt) {
+                document.getElementById('info-equipos').innerHTML = `<strong>Equipamiento disponible:</strong> ${opt.getAttribute('data-equipos')}`;
+            }
+        }
+
+        async function fLogin() {
+            let correo = document.getElementById('login-correo').value;
+            let pass = document.getElementById('login-pass').value;
+            try {
+                let res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({correo, pass})
+                });
+                let data = await res.json();
+                if(data.status === 'ok') {
+                    currentUser = { correo, nombre: data.nombre, rol: data.rol };
+                    document.getElementById('sec-login').classList.add('hidden');
+                    document.getElementById('sec-app').classList.remove('hidden');
+                    document.getElementById('lbl-bienvenida').innerText = "Bienvenido, " + data.nombre;
+
+                    let badge = document.getElementById('lbl-rol-badge');
+                    badge.innerText = data.rol.toUpperCase();
+                    badge.className = "badge badge-" + data.rol;
+
+                    if(data.rol === 'admin') {
+                        document.getElementById('tab-admin').classList.remove('hidden');
+                    } else {
+                        document.getElementById('tab-admin').classList.add('hidden');
+                    }
+                    verificarAlertas();
+                    initApp();
+                } else {
+                    showToast(data.mensaje);
+                }
+            } catch(e) {
+                showToast("Error de conexión con el servidor ESP32.");
+            }
+        }
+
+        function fLogout() {
+            currentUser = null;
+            document.getElementById('sec-app').classList.add('hidden');
+            document.getElementById('sec-login').classList.remove('hidden');
+        }
+
+        function switchTab(tabName) {
+            ['reserva', 'mis-reservas', 'reporte', 'admin'].forEach(t => {
+                document.getElementById('pane-' + t).classList.add('hidden');
+                document.getElementById('tab-' + t).classList.remove('active');
+            });
+            document.getElementById('pane-' + tabName).classList.remove('hidden');
+            document.getElementById('tab-' + tabName).classList.add('active');
+
+            if(tabName === 'mis-reservas') cargarMisReservas();
+            if(tabName === 'admin') cargarPanelAdmin();
+        }
+
+        async function fReservar() {
+            const sel = document.getElementById('sel-lab');
+            const opt = sel.options[sel.selectedIndex];
+            const labCode = sel.value;
+            const labNombre = opt.getAttribute('data-nombre');
+            const area = opt.getAttribute('data-area');
+            const fecha = document.getElementById('res-fecha').value;
+            const hora = document.getElementById('res-hora').value;
+
+            if(!fecha) {
+                showToast("Por favor seleccione una fecha.");
+                return;
+            }
+
+            try {
+                let res = await fetch('/api/reservar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        labCode, labNombre, area, fecha, hora,
+                        rol: currentUser.rol,
+                        usuarioCorreo: currentUser.correo,
+                        usuarioNombre: currentUser.nombre
+                    })
+                });
+                let data = await res.json();
+                if(data.status === 'ok') {
+                    showToast("¡Reserva registrada con éxito! ID: " + data.id);
+                    switchTab('mis-reservas');
+                } else {
+                    showToast(data.mensaje);
+                }
+            } catch(e) {
+                showToast("Error al procesar la reserva.");
+            }
+        }
+
+        async function cargarMisReservas() {
+            try {
+                let res = await fetch('/api/mis_reservas?correo=' + encodeURIComponent(currentUser.correo));
+                let reservas = await res.json();
+                let html = '';
+                if(reservas.length === 0) {
+                    html = '<p>No tienes reservas registradas actualmente.</p>';
+                } else {
+                    reservas.forEach(r => {
+                        html += `
+                        <div class="item-list">
+                            <div>
+                                <strong>[${r.id}] ${r.labNombre}</strong><br>
+                                <small>Fecha: ${r.fecha} | Horario: ${r.hora}</small><br>
+                                <span class="badge badge-${r.rol}">${r.rol.toUpperCase()}</span>
+                            </div>
+                            <div>
+                                <button class="btn-danger" onclick="cancelarReserva('${r.id}')">Cancelar</button>
+                                <div class="qr-box">
+                                    <canvas id="qr-${r.id}"></canvas>
+                                </div>
+                            </div>
+                        </div>`;
+                    });
+                }
+                document.getElementById('contenedor-mis-reservas').innerHTML = html;
+
+                // Generar QR en formato JSON estructurado con los datos de la reserva
+                reservas.forEach(r => {
+                    const qrPayload = JSON.stringify({
+                        id: r.id,
+                        labCode: r.labCode,
+                        fecha: r.fecha,
+                        hora: r.hora,
+                        usuarioCorreo: r.usuarioCorreo,
+                        rol: r.rol
+                    });
+                    generarQR(qrPayload, `qr-${r.id}`);
+                });
+            } catch(e) {
+                document.getElementById('contenedor-mis-reservas').innerHTML = '<p>Error al cargar reservas.</p>';
+            }
+        }
+
+        async function cancelarReserva(id) {
+            try {
+                await fetch('/api/cancelar_reserva', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id})
+                });
+                showToast("Reserva cancelada correctamente.");
+                cargarMisReservas();
+            } catch(e) {
+                showToast("No se pudo cancelar la reserva.");
+            }
+        }
+
+        async function fEnviarReporte() {
+            const labCode = document.getElementById('rep-lab').value;
+            const descripcion = document.getElementById('rep-desc').value;
+            if(!descripcion.trim()) {
+                showToast("Por favor describa la falla.");
+                return;
+            }
+            try {
+                await fetch('/api/reportar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({labCode, descripcion, autor: currentUser.nombre})
+                });
+                showToast("Reporte enviado al departamento de IT.");
+                document.getElementById('rep-desc').value = '';
+            } catch(e) {
+                showToast("Error al enviar reporte.");
+            }
+        }
+
+        async function verificarAlertas() {
+            try {
+                let res = await fetch('/api/notificaciones?correo=' + encodeURIComponent(currentUser.correo));
+                let avisos = await res.json();
+                if(avisos && avisos.length > 0) {
+                    let html = '';
+                    avisos.forEach(a => html += `<p>• ${a}</p>`);
+                    document.getElementById('lista-alertas').innerHTML = html;
+                    document.getElementById('box-alertas').classList.remove('hidden');
+                }
+            } catch(e) {}
+        }
+
+        async function cargarPanelAdmin() {
+            try {
+                let resRes = await fetch('/api/todas_reservas');
+                let reservas = await resRes.json();
+                let htmlRes = '';
+                if(reservas.length === 0) htmlRes = '<p>No hay reservas activas en el campus.</p>';
+                else {
+                    reservas.forEach(r => {
+                        htmlRes += `
+                        <div class="item-list">
+                            <div>
+                                <strong>${r.labNombre}</strong> (${r.fecha} - ${r.hora})<br>
+                                <small>Usuario: ${r.usuarioNombre} (${r.usuarioCorreo})</small>
+                            </div>
+                            <button class="btn-danger" onclick="adminCancelarReserva('${r.id}')">Forzar Cancelación</button>
+                        </div>`;
+                    });
+                }
+                document.getElementById('admin-lista-reservas').innerHTML = htmlRes;
+
+                let resRep = await fetch('/api/reportes');
+                let reportes = await resRep.json();
+                let htmlRep = '';
+                if(reportes.length === 0) htmlRep = '<p>No hay incidencias reportadas.</p>';
+                else {
+                    reportes.forEach((rep, idx) => {
+                        htmlRep += `
+                        <div class="item-list">
+                            <div>
+                                <strong>Lab: ${rep.labCode}</strong><br>
+                                <p style="font-size: 0.9rem;">${rep.descripcion}</p>
+                                <small>Reportado por: ${rep.autor}</small>
+                            </div>
+                            <button style="background: var(--success);" onclick="resolverReporte(${idx})">Solucionado</button>
+                        </div>`;
+                    });
+                }
+                document.getElementById('admin-lista-reportes').innerHTML = htmlRep;
+            } catch(e) {}
+        }
+
+        async function adminCancelarReserva(id) {
+            await fetch('/api/admin_cancelar', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({id})
+            });
+            showToast("Reserva dada de baja por administración.");
+            cargarPanelAdmin();
+        }
+
+        async function resolverReporte(index) {
+            await fetch('/api/resolver_reporte', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({index})
+            });
+            showToast("Incidencia cerrada y archivada.");
+            cargarPanelAdmin();
+        }
+    </script>
+</body>
+</html>
